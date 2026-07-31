@@ -1,17 +1,21 @@
 {
   "name": "tesco-protein",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tesco UK protein density explorer (PER·KCAL) with scrape CLI and Docker image",
   "main": "server.mjs",
   "scripts": {
     "scrape": "node scrape.mjs",
+    "fetch-taxonomy": "node scripts/fetch-taxonomy.mjs --force",
+    "seed": "node scripts/seed-from-catalogue.mjs",
+    "sync-catalogue": "node scripts/sync-catalogue.mjs",
     "rank": "node rank.mjs",
     "export-web": "node scripts/export-web-data.mjs",
     "export-defaults": "node scripts/export-web-data.mjs --defaults",
     "dev": "npm run export-web && npm run dev --prefix web",
     "build": "npm run export-web && npm run build --prefix web",
     "preview": "npm run preview --prefix web",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "repair-nutrition": "node scripts/repair-nutrition.mjs"
   },
   "keywords": [
     "tesco",

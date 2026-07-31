@@ -1,0 +1,154 @@
+name: Weekly catalogue scrape
+
+# Re-browse Tesco aisles, hydrate only new SKUs, repair unchecked nutrition,
+# commit catalogue + defaults, bump patch, tag, publish GHCR + GitHub Release.
+# (Tag pushes from GITHUB_TOKEN do not re-trigger other workflows.)
+
+on:
+  schedule:
+    # Mondays 03:00 UTC
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-catalogue-scrape
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: tesco-protein
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  scrape-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Seed data from committed catalogue
+        run: node scripts/seed-from-catalogue.mjs --force
+
+      - name: Scrape (skip hydrate for known SKUs)
+        run: node scrape.mjs --fresh-browse --refresh-taxonomy
+
+      - name: Repair nutrition for new unchecked SKUs only
+        run: node scripts/repair-nutrition.mjs
+
+      - name: Sync catalogue + defaults into repo paths
+        run: node scripts/sync-catalogue.mjs
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet -- catalogue/products.json defaults/products.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No catalogue changes"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Catalogue changed"
+          fi
+
+      - name: Bump patch version
+        id: ver
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.argv[1];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');" "$NEXT"
+          sed -i "s/${VERSION//./\\.}/${NEXT}/g" README.md || true
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEXT" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MAJOR.$MINOR" >> "$GITHUB_OUTPUT"
+          echo "Next release: v$NEXT"
+
+      - name: Commit catalogue and version bump
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalogue/products.json defaults/products.json package.json README.md
+          git commit -m "chore: weekly catalogue refresh ($(date -u +%Y-%m-%d))" \
+            -m "Automated Tesco aisle scrape. Hydrate skips known SKUs; nutrition repair skips nutritionChecked."
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin HEAD
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.changes.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        if: steps.changes.outputs.changed == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=${{ steps.ver.outputs.tag }}
+            type=raw,value=${{ steps.ver.outputs.minor }}
+            type=raw,value=${{ steps.ver.outputs.major }}
+            type=raw,value=latest
+
+      - name: Build and push
+        if: steps.changes.outputs.changed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create GitHub Release
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(cat <<EOF
+          ## tesco-protein ${{ steps.ver.outputs.tag }}
+
+          Weekly catalogue refresh.
+
+          Docker image (GHCR):
+
+          \`\`\`bash
+          docker pull ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
+          \`\`\`
+          EOF
+          )"
+          if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.ver.outputs.tag }} already exists"
+          else
+            gh release create "${{ steps.ver.outputs.tag }}" \
+              --title "tesco-protein ${{ steps.ver.outputs.tag }}" \
+              --notes "$BODY"
+          fi

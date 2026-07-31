@@ -8,7 +8,7 @@
  */
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import path from "node:path";
-import { DATA_DIR, PRODUCTS_PATH, WEB_PRODUCTS_PATH } from "./paths.mjs";
+import { DATA_DIR, PRODUCTS_PATH, WEB_PRODUCTS_PATH, DEFAULTS_PATH } from "./paths.mjs";
 
 function toSlim(raw) {
   const values = Array.isArray(raw) ? raw : Object.values(raw);
@@ -68,7 +68,7 @@ try {
 
 // Also write a defaults copy when requested (release packaging).
 if (process.argv.includes("--defaults")) {
-  const dest = path.resolve("defaults", "products.json");
+  const dest = DEFAULTS_PATH;
   await mkdir(path.dirname(dest), { recursive: true });
   await writeFile(dest, JSON.stringify(slim));
   console.log(`Wrote ${slim.length} products → ${dest}`);

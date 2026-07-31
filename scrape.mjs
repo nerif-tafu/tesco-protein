@@ -1,43 +1,51 @@
 /**
  * Scrape Tesco category catalogues + on-pack macros via the public GraphQL
- * gateway (basketeer). Resumable: re-running skips SKUs already in the output.
+ * gateway (basketeer). Walks every leaf aisle under the grocery roots (from
+ * Query.taxonomy) — top-level department browse alone is incomplete.
+ *
+ * Resumable: re-running skips SKUs already in the output.
  *
  * Usage:
  *   npm run scrape
  *   npm run scrape -- --max-pages 10
  *   npm run scrape -- --categories "Food Cupboard,Drinks"
+ *   npm run scrape -- --refresh-taxonomy
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Basketeer, categoryFacet, MAX_PRODUCT_BATCH_SIZE } from "basketeer";
-import { DATA_DIR, PRODUCTS_PATH, INDEX_PATH } from "./scripts/paths.mjs";
+import { Basketeer, MAX_PRODUCT_BATCH_SIZE } from "basketeer";
+import {
+  PRODUCTS_PATH,
+  INDEX_PATH,
+  BROWSE_INDEX_PATH,
+} from "./scripts/paths.mjs";
+import { extractMacros } from "./scripts/nutrition.mjs";
+import { ROOTS } from "./scripts/facets.mjs";
+import { loadOrFetchTaxonomy } from "./scripts/fetch-taxonomy.mjs";
 
-const OUT_DIR = DATA_DIR;
-
-/** Maps user browse URLs → Tesco category facet department names. */
-const CATEGORIES = [
-  { name: "Fresh Food", slug: "fresh-food" },
-  { name: "Bakery", slug: "bakery" },
-  { name: "Frozen Food", slug: "frozen-food" },
-  { name: "Treats & Snacks", slug: "treats-and-snacks" },
-  { name: "Food Cupboard", slug: "food-cupboard" },
-  { name: "Drinks", slug: "drinks" },
-];
-
+const CATEGORIES = ROOTS;
 const PAGE_SIZE = 48;
+const BROWSE_SAVE_EVERY = 50;
 
 function parseArgs(argv) {
-  const args = { maxPages: Infinity, categories: null, delayMs: 0 };
+  const args = {
+    maxPages: Infinity,
+    categories: null,
+    refreshTaxonomy: false,
+    freshBrowse: false,
+    help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--max-pages") args.maxPages = Number(argv[++i]);
     else if (a.startsWith("--categories=")) args.categories = a.slice("--categories=".length);
     else if (a === "--categories") {
-      // Accept `--categories Food Cupboard,Drinks` (PowerShell-friendly).
       const parts = [];
       while (argv[i + 1] && !argv[i + 1].startsWith("--")) parts.push(argv[++i]);
       args.categories = parts.join(" ");
-    } else if (a === "--help" || a === "-h") args.help = true;
+    } else if (a === "--refresh-taxonomy") args.refreshTaxonomy = true;
+    else if (a === "--fresh-browse") args.freshBrowse = true;
+    else if (a === "--help" || a === "-h") args.help = true;
   }
   return args;
 }
@@ -45,7 +53,10 @@ function parseArgs(argv) {
 function pickCategories(filter) {
   if (!filter) return CATEGORIES;
   const wanted = new Set(
-    filter.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+    filter
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
   );
   return CATEGORIES.filter(
     (c) => wanted.has(c.name.toLowerCase()) || wanted.has(c.slug),
@@ -66,12 +77,10 @@ async function saveJson(file, value) {
   await writeFile(file, JSON.stringify(value, null, 2) + "\n", "utf8");
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function toRecord(product, categories) {
-  const macros = product.macros ?? {};
+  const nutrition = extractMacros(product);
+  const hasMacros =
+    nutrition.energyKcal != null && nutrition.protein != null;
   return {
     sku: product.sku,
     tpnb: product.tpnb,
@@ -83,55 +92,153 @@ function toRecord(product, categories) {
     unitOfMeasure: product.price?.unitOfMeasure ?? null,
     available: product.available,
     categories: [...categories].sort(),
-    nutritionBasis: product.nutrition?.basis ?? null,
-    energyKcal: macros.energyKcal ?? null,
-    energyKj: macros.energyKj ?? null,
-    protein: macros.protein ?? null,
-    fat: macros.fat ?? null,
-    saturates: macros.saturates ?? null,
-    carbs: macros.carbs ?? null,
-    sugars: macros.sugars ?? null,
-    fibre: macros.fibre ?? null,
-    salt: macros.salt ?? null,
+    nutritionBasis: nutrition.nutritionBasis,
+    energyKcal: nutrition.energyKcal,
+    energyKj: nutrition.energyKj,
+    protein: nutrition.protein,
+    fat: nutrition.fat,
+    saturates: nutrition.saturates,
+    carbs: nutrition.carbs,
+    sugars: nutrition.sugars,
+    fibre: nutrition.fibre,
+    salt: nutrition.salt,
+    // Complete macros → done; incomplete stays unchecked for one repair pass.
+    nutritionChecked: hasMacros,
     scrapedAt: new Date().toISOString(),
   };
 }
 
-async function collectSkus(client, categories, maxPages) {
+function serializeBrowse(bySku) {
+  /** @type {Record<string, { title: string, categories: string[] }>} */
+  const out = {};
+  for (const [sku, meta] of bySku) {
+    out[sku] = {
+      title: meta.title,
+      categories: [...meta.categories].sort(),
+    };
+  }
+  return out;
+}
+
+function restoreBrowse(raw) {
   /** @type {Map<string, { sku: string, title: string, categories: Set<string> }>} */
   const bySku = new Map();
+  for (const [sku, meta] of Object.entries(raw ?? {})) {
+    bySku.set(sku, {
+      sku,
+      title: meta.title,
+      categories: new Set(meta.categories ?? []),
+    });
+  }
+  return bySku;
+}
 
-  for (const cat of categories) {
-    const facet = categoryFacet(cat.name);
-    console.log(`\nBrowsing ${cat.name}…`);
+async function saveBrowseProgress(bySku, aisleIndex, targetsLen, roots) {
+  await saveJson(BROWSE_INDEX_PATH, {
+    updatedAt: new Date().toISOString(),
+    aisleIndex,
+    targetsLen,
+    roots: [...roots],
+    count: bySku.size,
+    bySku: serializeBrowse(bySku),
+  });
+}
+
+/**
+ * Browse every leaf aisle under the selected department roots.
+ * Products are tagged with the root department name (e.g. "Food Cupboard").
+ * Empty / broken aisles (GraphQL `product-not-found`) are skipped.
+ */
+async function collectSkus(client, categories, leaves, maxPages, { freshBrowse }) {
+  const wantedRoots = new Set(categories.map((c) => c.name));
+  const targets = leaves.filter((n) => wantedRoots.has(n.names[0]));
+  const rootKey = [...wantedRoots].sort().join("|");
+
+  let startIdx = 0;
+  /** @type {Map<string, { sku: string, title: string, categories: Set<string> }>} */
+  let bySku = new Map();
+
+  if (!freshBrowse) {
+    const prev = await loadJson(BROWSE_INDEX_PATH, null);
+    if (
+      prev?.bySku &&
+      prev.targetsLen === targets.length &&
+      (prev.roots ?? []).join("|") === rootKey &&
+      Number(prev.aisleIndex) > 0 &&
+      Number(prev.aisleIndex) < targets.length
+    ) {
+      bySku = restoreBrowse(prev.bySku);
+      startIdx = Number(prev.aisleIndex);
+      console.log(
+        `\nResuming browse from aisle ${startIdx + 1}/${targets.length} ` +
+          `(${bySku.size} SKUs cached in ${BROWSE_INDEX_PATH})`,
+      );
+    }
+  }
+
+  if (startIdx === 0) {
+    console.log(
+      `\nBrowsing ${targets.length} leaf aisles under ${[...wantedRoots].join(", ")}…`,
+    );
+  }
+
+  for (let aisleIdx = startIdx; aisleIdx < targets.length; aisleIdx++) {
+    const leaf = targets[aisleIdx];
+    const n = aisleIdx + 1;
+    const root = leaf.names[0];
+    const label = leaf.names.join(" › ");
     let page = 1;
     let hasMore = true;
+    let added = 0;
+    let skipped = false;
 
     while (hasMore && page <= maxPages) {
-      const result = await client.browseCategory(facet, {
-        limit: PAGE_SIZE,
-        page,
-      });
+      let result;
+      try {
+        result = await client.browseCategory(leaf.id, {
+          limit: PAGE_SIZE,
+          page,
+        });
+      } catch (err) {
+        const msg = String(err?.message ?? err);
+        // Empty / retired shelves often return this instead of an empty page.
+        if (/product-not-found/i.test(msg)) {
+          console.log(`  [${n}/${targets.length}] ${label}: skip (${msg})`);
+          skipped = true;
+          break;
+        }
+        throw err;
+      }
       for (const item of result.results) {
         if (!item.sku) continue;
         const existing = bySku.get(item.sku);
-        if (existing) existing.categories.add(cat.name);
+        if (existing) existing.categories.add(root);
         else {
           bySku.set(item.sku, {
             sku: item.sku,
             title: item.title,
-            categories: new Set([cat.name]),
+            categories: new Set([root]),
           });
+          added++;
         }
       }
       hasMore = result.hasMore;
-      console.log(
-        `  page ${page}: +${result.results.length} (unique so far ${bySku.size})${hasMore ? "" : " [end]"}`,
-      );
       page++;
     }
-    if (hasMore && page > maxPages) {
-      console.log(`  stopped at --max-pages ${maxPages}`);
+
+    if (!skipped && (n % 25 === 0 || n === targets.length || added > 0)) {
+      console.log(
+        `  [${n}/${targets.length}] ${label}: +${added} new` +
+          (page - 1 > 1 ? ` (${page - 1} pages)` : "") +
+          ` (unique ${bySku.size})`,
+      );
+    }
+    if (!skipped && hasMore && page > maxPages) {
+      console.log(`  stopped aisle early at --max-pages ${maxPages}: ${label}`);
+    }
+
+    if (n % BROWSE_SAVE_EVERY === 0 || n === targets.length) {
+      await saveBrowseProgress(bySku, n, targets.length, wantedRoots);
     }
   }
 
@@ -162,7 +269,6 @@ async function hydrateNutrition(client, bySku, productsBySku) {
       }
       for (const sku of batch) {
         if (!got.has(sku)) {
-          // Discontinued / missing — remember so we don't retry forever.
           const meta = bySku.get(sku);
           productsBySku.set(sku, {
             sku,
@@ -195,7 +301,9 @@ async function hydrateNutrition(client, bySku, productsBySku) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log(`Usage: node scrape.mjs [--max-pages N] [--categories "A,B"]`);
+    console.log(
+      `Usage: node scrape.mjs [--max-pages N] [--categories "A,B"] [--refresh-taxonomy] [--fresh-browse]`,
+    );
     console.log(`Categories: ${CATEGORIES.map((c) => c.name).join(", ")}`);
     return;
   }
@@ -209,13 +317,36 @@ async function main() {
 
   console.log(
     `Categories: ${categories.map((c) => c.name).join(", ")}` +
-      (Number.isFinite(args.maxPages) ? ` | max pages/category: ${args.maxPages}` : " | all pages"),
+      (Number.isFinite(args.maxPages)
+        ? ` | max pages/aisle: ${args.maxPages}`
+        : " | all pages"),
+  );
+
+  // Prefer committed catalogue when local data/ is empty or behind.
+  try {
+    const { spawnSync } = await import("node:child_process");
+    spawnSync(process.execPath, ["scripts/seed-from-catalogue.mjs"], {
+      stdio: "inherit",
+    });
+  } catch {
+    /* catalogue optional */
+  }
+
+  const taxonomy = await loadOrFetchTaxonomy({ force: args.refreshTaxonomy });
+  console.log(
+    `Taxonomy: ${taxonomy.leaves.length} leaf aisles` +
+      (taxonomy.updatedAt ? ` (updated ${taxonomy.updatedAt})` : ""),
   );
 
   const client = new Basketeer();
-  const bySku = await collectSkus(client, categories, args.maxPages);
+  const bySku = await collectSkus(
+    client,
+    categories,
+    taxonomy.leaves,
+    args.maxPages,
+    { freshBrowse: args.freshBrowse },
+  );
 
-  // Merge category tags into any already-cached products that reappear.
   const cached = await loadJson(PRODUCTS_PATH, {});
   /** @type {Map<string, object>} */
   const productsBySku = new Map(Object.entries(cached));
@@ -248,9 +379,11 @@ async function main() {
   );
   try {
     const { spawnSync } = await import("node:child_process");
-    const exported = spawnSync(process.execPath, ["scripts/export-web-data.mjs"], {
-      stdio: "inherit",
-    });
+    const exported = spawnSync(
+      process.execPath,
+      ["scripts/export-web-data.mjs"],
+      { stdio: "inherit" },
+    );
     if (exported.status !== 0) {
       console.warn("Web export skipped/failed — run: npm run export-web");
     }

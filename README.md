@@ -6,17 +6,18 @@ Unofficial personal tool. Not affiliated with Tesco.
 
 ## Features
 
-- Scrapes Tesco category catalogues via their public GraphQL gateway ([basketeer](https://github.com/tobyandrews1985/basketeer))
+- Scrapes Tesco aisle catalogues via their public GraphQL gateway ([basketeer](https://github.com/tobyandrews1985/basketeer)), walking every leaf under Fresh Food / Bakery / Frozen / Treats & Snacks / Food Cupboard / Drinks (department `/all` alone is incomplete)
 - Web UI (**PER·KCAL**) to filter vegetarian / vegan foods, search, and sort by protein density or £/g protein
 - Advanced filters (min % energy from protein, max fat/carbs, brand, include/exclude terms, …)
 - Docker image with persistent **`/data`** volume for scrape storage
+- **Weekly GitHub Action** refreshes the committed catalogue (skips already-hydrated SKUs)
 
 ## Quick start (Docker)
 
 ```bash
 docker run --rm -p 8080:8080 \
   -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.0.0
+  ghcr.io/nerif-tafu/tesco-protein:1.0.1
 ```
 
 Open http://localhost:8080
@@ -27,12 +28,12 @@ The image ships with a bundled catalogue. Remount `/data` to keep scrapes across
 
 ```bash
 docker run --rm -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.0.0 \
+  ghcr.io/nerif-tafu/tesco-protein:1.0.1 \
   scrape
 
 # optional limits
 docker run --rm -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.0.0 \
+  ghcr.io/nerif-tafu/tesco-protein:1.0.1 \
   scrape --max-pages 5 --categories food-cupboard,drinks
 ```
 
@@ -43,7 +44,7 @@ Then restart the server container (same `/data` mount) to pick up the new export
 ```yaml
 services:
   tesco-protein:
-    image: ghcr.io/nerif-tafu/tesco-protein:1.0.0
+    image: ghcr.io/nerif-tafu/tesco-protein:1.0.1
     ports:
       - "8080:8080"
     volumes:
@@ -60,8 +61,16 @@ volumes:
 | --- | --- |
 | `/data/products.json` | Full scrape (object keyed by SKU) |
 | `/data/products.web.json` | Slim JSON served to the UI as `/products.json` |
+| `/data/taxonomy.json` | Cached aisle tree + facet ids (refreshed with `--refresh-taxonomy`) |
 | `/data/skus.json` | Scrape index / progress metadata |
 | `/data/veggie-protein-rank.*` | Optional CLI rank output |
+
+Committed copies used for incremental weekly scrapes:
+
+| Path | Purpose |
+| --- | --- |
+| `catalogue/products.json` | Full scrape checked into git |
+| `defaults/products.json` | Slim UI payload baked into the Docker image |
 
 Set `DATA_DIR` to override the data root (defaults to `./data` locally, `/data` in Docker).
 
@@ -71,8 +80,9 @@ Set `DATA_DIR` to override the data root (defaults to `./data` locally, `/data` 
 npm install
 cd web && npm install && cd ..
 
-# needs a prior scrape (or copy defaults)
-npm run scrape -- --max-pages 1 --categories food-cupboard
+# seed runtime data from the committed catalogue, then scrape new SKUs only
+npm run seed
+npm run scrape
 npm run export-web
 npm run dev
 ```
@@ -99,9 +109,11 @@ Semver tags drive GHCR publishes:
 | `v1.2.3` | `:1.2.3`, `:v1.2.3`, `:1.2`, `:1`, `:latest` |
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
+
+A **weekly** workflow (`.github/workflows/weekly-scrape.yml`) also bumps the patch version, commits `catalogue/` + `defaults/`, tags, and publishes when the catalogue changes. Trigger manually via **Actions → Weekly catalogue scrape → Run workflow**.
 
 Images: `ghcr.io/nerif-tafu/tesco-protein:<version>`
 
