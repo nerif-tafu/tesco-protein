@@ -22,6 +22,7 @@ import {
 import { extractMacros } from "./scripts/nutrition.mjs";
 import { ROOTS } from "./scripts/facets.mjs";
 import { loadOrFetchTaxonomy } from "./scripts/fetch-taxonomy.mjs";
+import { fetchProductsNutrition } from "./scripts/fetch-product-nutrition.mjs";
 
 const CATEGORIES = ROOTS;
 const PAGE_SIZE = 48;
@@ -77,32 +78,33 @@ async function saveJson(file, value) {
   await writeFile(file, JSON.stringify(value, null, 2) + "\n", "utf8");
 }
 
-function toRecord(product, categories) {
-  const nutrition = extractMacros(product);
+function toRecord(node, categories, nutrition) {
+  const macros = nutrition ?? extractMacros({ raw: { details: node?.details } });
   const hasMacros =
-    nutrition.energyKcal != null && nutrition.protein != null;
+    macros.energyKcal != null && macros.protein != null;
   return {
-    sku: product.sku,
-    tpnb: product.tpnb,
-    title: product.title,
-    brand: product.brand,
-    imageUrl: product.imageUrl,
-    price: product.price?.actual ?? null,
-    unitPrice: product.price?.unitPrice ?? null,
-    unitOfMeasure: product.price?.unitOfMeasure ?? null,
-    available: product.available,
+    sku: node.tpnc ?? node.sku,
+    tpnb: node.tpnb ?? null,
+    title: node.title,
+    brand: node.brandName ?? node.brand ?? null,
+    imageUrl: node.defaultImageUrl ?? node.imageUrl ?? null,
+    price: node.price?.actual ?? null,
+    unitPrice: node.price?.unitPrice ?? null,
+    unitOfMeasure: node.price?.unitOfMeasure ?? null,
+    available: node.isForSale ?? node.available ?? null,
     categories: [...categories].sort(),
-    nutritionBasis: nutrition.nutritionBasis,
-    energyKcal: nutrition.energyKcal,
-    energyKj: nutrition.energyKj,
-    protein: nutrition.protein,
-    fat: nutrition.fat,
-    saturates: nutrition.saturates,
-    carbs: nutrition.carbs,
-    sugars: nutrition.sugars,
-    fibre: nutrition.fibre,
-    salt: nutrition.salt,
-    // Complete macros → done; incomplete stays unchecked for one repair pass.
+    nutritionBasis: macros.nutritionBasis,
+    energyKcal: macros.energyKcal,
+    energyKj: macros.energyKj,
+    protein: macros.protein,
+    fat: macros.fat,
+    saturates: macros.saturates,
+    carbs: macros.carbs,
+    sugars: macros.sugars,
+    fibre: macros.fibre,
+    salt: macros.salt,
+    multipackAverage: macros.multipackAverage || undefined,
+    multipackFlavours: macros.multipackFlavours || undefined,
     nutritionChecked: hasMacros,
     scrapedAt: new Date().toISOString(),
   };
@@ -257,19 +259,11 @@ async function hydrateNutrition(client, bySku, productsBySku) {
   for (let i = 0; i < pending.length; i += MAX_PRODUCT_BATCH_SIZE) {
     const batch = pending.slice(i, i + MAX_PRODUCT_BATCH_SIZE);
     try {
-      const products = await client.getProducts(batch);
-      const got = new Set(products.map((p) => p.sku));
-      for (const product of products) {
-        const meta = bySku.get(product.sku);
-        productsBySku.set(
-          product.sku,
-          toRecord(product, meta?.categories ?? new Set()),
-        );
-        ok++;
-      }
+      const fetched = await fetchProductsNutrition(batch);
       for (const sku of batch) {
-        if (!got.has(sku)) {
-          const meta = bySku.get(sku);
+        const hit = fetched.get(sku);
+        const meta = bySku.get(sku);
+        if (!hit) {
           productsBySku.set(sku, {
             sku,
             title: meta?.title ?? null,
@@ -278,7 +272,13 @@ async function hydrateNutrition(client, bySku, productsBySku) {
             scrapedAt: new Date().toISOString(),
           });
           failed++;
+          continue;
         }
+        productsBySku.set(
+          sku,
+          toRecord(hit.node, meta?.categories ?? new Set(), hit.macros),
+        );
+        ok++;
       }
     } catch (err) {
       console.error(`  batch failed at offset ${i}: ${err.message ?? err}`);

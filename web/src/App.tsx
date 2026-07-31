@@ -182,18 +182,30 @@ export default function App() {
 
         {top && (
           <aside className="leader" aria-label="Current #1">
-            <span className="leader-label">#1 right now</span>
-            <strong className="leader-metric">
-              {metricPrimary(top)}
-              {sort === "proteinPerKcal" && <span>g/kcal</span>}
-              {sort === "pricePerProtein" && <span>protein</span>}
-            </strong>
-            <p className="leader-title">{top.title}</p>
-            <p className="leader-macros">
-              {top.protein}g protein · {top.energyKcal} kcal
-              {top.pricePerProtein != null &&
-                ` · ${formatPencePerG(top.pricePerProtein)} protein`}
-            </p>
+            {top.imageUrl && (
+              <img
+                className="leader-img"
+                src={top.imageUrl}
+                alt=""
+                width={88}
+                height={88}
+                loading="eager"
+              />
+            )}
+            <div className="leader-copy">
+              <span className="leader-label">#1 right now</span>
+              <strong className="leader-metric">
+                {metricPrimary(top)}
+                {sort === "proteinPerKcal" && <span>g/kcal</span>}
+                {sort === "pricePerProtein" && <span>protein</span>}
+              </strong>
+              <p className="leader-title">{top.title}</p>
+              <p className="leader-macros">
+                {top.protein}g protein · {top.energyKcal} kcal
+                {top.pricePerProtein != null &&
+                  ` · ${formatPencePerG(top.pricePerProtein)} protein`}
+              </p>
+            </div>
           </aside>
         )}
       </header>
@@ -204,7 +216,6 @@ export default function App() {
             [
               ["all", "All foods"],
               ["vegetarian", "Vegetarian"],
-              ["vegan", "Vegan"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -468,6 +479,19 @@ export default function App() {
             <div className="rank" aria-label={`Rank ${item.rank}`}>
               {String(item.rank).padStart(2, "0")}
             </div>
+            {item.imageUrl ? (
+              <img
+                className="thumb"
+                src={item.imageUrl}
+                alt=""
+                width={72}
+                height={72}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <div className="thumb thumb-empty" aria-hidden="true" />
+            )}
             <div className="body">
               <div className="title-row">
                 <a href={item.url} target="_blank" rel="noreferrer">

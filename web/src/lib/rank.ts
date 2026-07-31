@@ -1,4 +1,4 @@
-export type Diet = "all" | "vegetarian" | "vegan";
+export type Diet = "all" | "vegetarian";
 
 export type SortKey =
   | "proteinPerKcal"
@@ -12,6 +12,7 @@ export interface Product {
   sku: string;
   title: string;
   brand: string | null;
+  imageUrl?: string | null;
   categories: string[];
   nutritionBasis: string | null;
   energyKcal: number | null;
@@ -77,14 +78,14 @@ const MEAT_FISH = [
   "calamari", "seafood", "shellfish", "kipper", "whitebait", "pollock", "basa",
   "sea bass", "sea bream", "trout", "swordfish", "surimi", "plaice", "coleys",
   "coley", "seabass", "seabream",
-];
-
-const DAIRY_EGG = [
-  "milk", "cheese", "butter", "cream", "yoghurt", "yogurt", "fromage", "whey",
-  "casein", "egg", "mayonnaise", "custard", "honey", "kvarg", "quark", "skyr",
-  "lindahls", "ufit", "protein drink", "protein milkshake", "protein pudding",
-  "milkshake", "curd", "cottage cheese", "greek recipe", "greek yogurt",
-  "greek yoghurt",
+  // Dried / cured / cuts that omit species in the title
+  "biltong", "bresaola", "jerky", "sopocka", "speck", "coppa", "guanciale",
+  "mortadella", "nduja", "chorizo", "loin", "breast", "thigh", "drumstick",
+  "wing ", " wings", "slower grown", "wiltshire cured", "air dried",
+  "air-dried", "cured beef", "dried beef", "beef jerky", "pork loin",
+  "loin joint", "smoked loin", "diced breast", "mince beef", "beef mince",
+  "lamb mince", "pork mince", "turkey mince", "chicken mince",
+  "kebab", "spatchcock", "zywiecka", "podsuszana", "krakowska",
 ];
 
 const VEGGIE_ALLOW = [
@@ -135,42 +136,12 @@ function tokenize(s: string): string[] {
     .filter(Boolean);
 }
 
-function isNonVeganDairyEgg(t: string) {
-  if (
-    t.includes("vegan") ||
-    t.includes("plant chef") ||
-    t.includes("plant-based") ||
-    t.includes("plant based")
-  ) {
-    return false;
-  }
-  if (
-    /\b(oat|soya|soy|almond|coconut|rice|hemp|pea|hazelnut)\b.*\b(milk|drink|yogurt|yoghurt)\b/.test(
-      t,
-    )
-  ) {
-    return false;
-  }
-  if (
-    /\b(milk|drink|yogurt|yoghurt)\b.*\b(oat|soya|soy|almond|coconut|rice|hemp|pea|hazelnut)\b/.test(
-      t,
-    )
-  ) {
-    return false;
-  }
-  return includesAny(t, DAIRY_EGG);
-}
-
 export function passesDiet(title: string, diet: Diet): boolean {
   if (diet === "all") return true;
   const t = normalizeTitle(title);
   if (!t) return false;
   const allowed = includesAny(t, VEGGIE_ALLOW);
   if (!allowed && includesAny(t, MEAT_FISH)) return false;
-  if (diet === "vegan") {
-    if (t.includes("quorn") && !t.includes("vegan")) return false;
-    if (isNonVeganDairyEgg(t)) return false;
-  }
   return true;
 }
 

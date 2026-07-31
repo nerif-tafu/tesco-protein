@@ -18,6 +18,7 @@ function toSlim(raw) {
       sku: p.sku,
       title: p.title,
       brand: p.brand,
+      imageUrl: p.imageUrl ?? null,
       categories: p.categories ?? [],
       nutritionBasis: p.nutritionBasis,
       energyKcal: p.energyKcal,
