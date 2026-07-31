@@ -10,6 +10,12 @@ import {
   type Product,
   type SortKey,
 } from "../lib/rank";
+import {
+  browseParamsFromState,
+  isAdvancedActive,
+  readBrowseStateFromUrl,
+  writeHash,
+} from "../lib/url-state";
 
 const PAGE_SIZE = 40;
 
@@ -26,19 +32,74 @@ interface Props {
 }
 
 export default function Browse({ products, error }: Props) {
-  const [diet, setDiet] = useState<Diet>("vegetarian");
-  const [minKcal, setMinKcal] = useState(40);
-  const [minProtein, setMinProtein] = useState(5);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortKey>("proteinPerKcal");
-  const [excludeCondiments, setExcludeCondiments] = useState(true);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [advanced, setAdvanced] = useState<AdvancedSearch>(DEFAULT_ADVANCED);
+  const initial = useMemo(() => readBrowseStateFromUrl(), []);
+  const [diet, setDiet] = useState<Diet>(initial.diet);
+  const [minKcal, setMinKcal] = useState(initial.minKcal);
+  const [minProtein, setMinProtein] = useState(initial.minProtein);
+  const [categories, setCategories] = useState<string[]>(initial.categories);
+  const [query, setQuery] = useState(initial.query);
+  const [sort, setSort] = useState<SortKey>(initial.sort);
+  const [excludeCondiments, setExcludeCondiments] = useState(
+    initial.excludeCondiments,
+  );
+  const [advancedOpen, setAdvancedOpen] = useState(initial.advancedOpen);
+  const [advanced, setAdvanced] = useState<AdvancedSearch>(initial.advanced);
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const [urlReady, setUrlReady] = useState(false);
 
   const deferredQuery = useDeferredValue(query);
   const deferredAdvanced = useDeferredValue(advanced);
+
+  // Sync filters → hash (skip first paint so we don't clobber a deep link before state settles).
+  useEffect(() => {
+    if (!urlReady) {
+      setUrlReady(true);
+      return;
+    }
+    writeHash(
+      "browse",
+      browseParamsFromState({
+        diet,
+        minKcal,
+        minProtein,
+        categories,
+        query,
+        sort,
+        excludeCondiments,
+        advanced,
+        advancedOpen,
+      }),
+    );
+  }, [
+    diet,
+    minKcal,
+    minProtein,
+    categories,
+    query,
+    sort,
+    excludeCondiments,
+    advanced,
+    advancedOpen,
+    urlReady,
+  ]);
+
+  // Hash edits / back-forward while still on Browse.
+  useEffect(() => {
+    const onHash = () => {
+      const next = readBrowseStateFromUrl();
+      setDiet(next.diet);
+      setMinKcal(next.minKcal);
+      setMinProtein(next.minProtein);
+      setCategories(next.categories);
+      setQuery(next.query);
+      setSort(next.sort);
+      setExcludeCondiments(next.excludeCondiments);
+      setAdvanced(next.advanced);
+      if (next.advancedOpen) setAdvancedOpen(true);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   useEffect(() => {
     setVisible(PAGE_SIZE);
@@ -81,24 +142,7 @@ export default function Browse({ products, error }: Props) {
 
   const shown = ranked.slice(0, visible);
 
-  const advancedActive = useMemo(() => {
-    const a = advanced;
-    return Boolean(
-      a.include.trim() ||
-        a.exclude.trim() ||
-        a.brand.trim() ||
-        a.maxFat != null ||
-        a.maxCarbs != null ||
-        a.maxSugars != null ||
-        a.maxSalt != null ||
-        a.minFibre != null ||
-        a.maxPrice != null ||
-        a.maxPricePerProtein != null ||
-        a.minProteinPct != null ||
-        a.requirePricePerProtein ||
-        a.matchMode !== "all",
-    );
-  }, [advanced]);
+  const advancedActive = useMemo(() => isAdvancedActive(advanced), [advanced]);
 
   function toggleCategory(cat: string) {
     setCategories((prev) =>

@@ -4,20 +4,19 @@ import { AuthProvider } from "./lib/auth";
 import type { Product } from "./lib/rank";
 import { StarsProvider } from "./lib/stars";
 import { useStars } from "./lib/stars-context";
+import { parseHash, type Route } from "./lib/url-state";
 import Browse from "./pages/Browse";
 import Starred from "./pages/Starred";
 import "./App.css";
 
-type Route = "browse" | "starred";
-
 function useHashRoute(): Route {
-  const [hash, setHash] = useState(() => window.location.hash);
+  const [route, setRoute] = useState<Route>(() => parseHash().route);
   useEffect(() => {
-    const onChange = () => setHash(window.location.hash);
+    const onChange = () => setRoute(parseHash().route);
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
-  return hash.startsWith("#/starred") ? "starred" : "browse";
+  return route;
 }
 
 export default function App() {

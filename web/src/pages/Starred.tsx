@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ProductRow from "../components/ProductRow";
 import { useAuth } from "../lib/auth-context";
 import {
@@ -8,8 +8,12 @@ import {
   type SortKey,
 } from "../lib/rank";
 import { useStars } from "../lib/stars-context";
-
-type StarredSort = "recent" | SortKey;
+import {
+  readStarredSortFromUrl,
+  starredParamsFromSort,
+  type StarredSort,
+  writeHash,
+} from "../lib/url-state";
 
 interface Props {
   products: Product[] | null;
@@ -19,7 +23,17 @@ interface Props {
 export default function Starred({ products, error }: Props) {
   const { stars, count, status: syncStatus, clearStars } = useStars();
   const { status: authStatus, signIn, error: authError } = useAuth();
-  const [sort, setSort] = useState<StarredSort>("recent");
+  const [sort, setSort] = useState<StarredSort>(() => readStarredSortFromUrl());
+
+  useEffect(() => {
+    writeHash("starred", starredParamsFromSort(sort));
+  }, [sort]);
+
+  useEffect(() => {
+    const onHash = () => setSort(readStarredSortFromUrl());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const items = useMemo(() => {
     if (!products) return [];
