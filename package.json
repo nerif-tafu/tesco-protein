@@ -1,0 +1,28 @@
+{
+  "name": "tesco-protein",
+  "version": "1.0.0",
+  "description": "Tesco UK protein density explorer (PER·KCAL) with scrape CLI and Docker image",
+  "main": "server.mjs",
+  "scripts": {
+    "scrape": "node scrape.mjs",
+    "rank": "node rank.mjs",
+    "export-web": "node scripts/export-web-data.mjs",
+    "export-defaults": "node scripts/export-web-data.mjs --defaults",
+    "dev": "npm run export-web && npm run dev --prefix web",
+    "build": "npm run export-web && npm run build --prefix web",
+    "preview": "npm run preview --prefix web",
+    "start": "node server.mjs"
+  },
+  "keywords": [
+    "tesco",
+    "nutrition",
+    "protein",
+    "docker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "basketeer": "^0.2.0"
+  }
+}

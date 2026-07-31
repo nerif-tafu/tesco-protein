@@ -1,0 +1,10 @@
+node_modules
+web/node_modules
+web/dist
+web/public/products.json
+data
+.git
+.github
+*.log
+.DS_Store
+README.md
