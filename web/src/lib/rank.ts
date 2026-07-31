@@ -259,6 +259,22 @@ function sortValue(item: RankedProduct, key: SortKey): number {
   }
 }
 
+/** Attach derived metrics to a product. Null when macros are unusable. */
+export function decorateProduct(p: Product, rank = 0): RankedProduct | null {
+  if (typeof p.energyKcal !== "number" || typeof p.protein !== "number") {
+    return null;
+  }
+  if (p.energyKcal <= 0) return null;
+  return {
+    ...p,
+    rank,
+    proteinPerKcal: p.protein / p.energyKcal,
+    proteinPctOfCalories: (p.protein * 4) / p.energyKcal,
+    pricePerProtein: pricePerGramProtein(p),
+    url: `https://www.tesco.com/groceries/en-GB/products/${p.sku}`,
+  };
+}
+
 export function rankProducts(
   products: Product[],
   opts: RankOptions,
@@ -290,19 +306,9 @@ export function rankProducts(
     return true;
   });
 
-  const ranked: RankedProduct[] = filtered.map((p) => {
-    const proteinPerKcal = (p.protein as number) / (p.energyKcal as number);
-    const proteinPctOfCalories =
-      ((p.protein as number) * 4) / (p.energyKcal as number);
-    return {
-      ...p,
-      rank: 0,
-      proteinPerKcal,
-      proteinPctOfCalories,
-      pricePerProtein: pricePerGramProtein(p),
-      url: `https://www.tesco.com/groceries/en-GB/products/${p.sku}`,
-    };
-  });
+  const ranked = filtered
+    .map((p) => decorateProduct(p))
+    .filter((p): p is RankedProduct => p !== null);
 
   const dir = opts.sortDir === "asc" ? 1 : -1;
   ranked.sort((a, b) => {

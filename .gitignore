@@ -5,4 +5,7 @@ web/dist/
 web/public/products.json
 *.log
 .DS_Store
+.env
+.env.*
+!.env.example
 # catalogue/products.json and defaults/products.json are committed
