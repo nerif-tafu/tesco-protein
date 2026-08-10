@@ -18,7 +18,7 @@ Unofficial personal tool. Not affiliated with Tesco.
 ```bash
 docker run --rm -p 8080:8080 \
   -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.2.1
+  ghcr.io/nerif-tafu/tesco-protein:1.2.2
 ```
 
 Open http://localhost:8080
@@ -29,12 +29,12 @@ The image ships with a bundled catalogue. Remount `/data` to keep scrapes across
 
 ```bash
 docker run --rm -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.2.1 \
+  ghcr.io/nerif-tafu/tesco-protein:1.2.2 \
   scrape
 
 # optional limits
 docker run --rm -v tesco-protein-data:/data \
-  ghcr.io/nerif-tafu/tesco-protein:1.2.1 \
+  ghcr.io/nerif-tafu/tesco-protein:1.2.2 \
   scrape --max-pages 5 --categories food-cupboard,drinks
 ```
 
@@ -45,7 +45,7 @@ Then restart the server container (same `/data` mount) to pick up the new export
 ```yaml
 services:
   tesco-protein:
-    image: ghcr.io/nerif-tafu/tesco-protein:1.2.1
+    image: ghcr.io/nerif-tafu/tesco-protein:1.2.2
     ports:
       - "8080:8080"
     volumes:
@@ -80,7 +80,7 @@ docker run --rm -p 8080:8080 \
   -e GOOGLE_CLIENT_SECRET=yyyyy \
   -e PUBLIC_BASE_URL=https://your.domain \
   -e SESSION_SECRET=a-long-random-string \
-  ghcr.io/nerif-tafu/tesco-protein:1.2.1
+  ghcr.io/nerif-tafu/tesco-protein:1.2.2
 ```
 
 | Variable | Purpose |
@@ -156,8 +156,8 @@ Semver tags drive GHCR publishes:
 | `v1.2.3` | `:1.2.3`, `:v1.2.3`, `:1.2`, `:1`, `:latest` |
 
 ```bash
-git tag v1.2.1
-git push origin v1.2.1
+git tag v1.2.2
+git push origin v1.2.2
 ```
 
 A **weekly** workflow (`.github/workflows/weekly-scrape.yml`) also bumps the patch version, commits `catalogue/` + `defaults/`, tags, and publishes when the catalogue changes. Trigger manually via **Actions → Weekly catalogue scrape → Run workflow**.
