@@ -153,7 +153,7 @@ Semver tags drive GHCR publishes:
 
 | Tag | Images pushed |
 | --- | --- |
-| `v1.2.5` | `:1.2.5`, `:v1.2.5`, `:1.2`, `:1`, `:latest` |
+| `v1.2.6` | `:1.2.6`, `:v1.2.6`, `:1.2`, `:1`, `:latest` |
 
 ```bash
 git tag v1.2.2

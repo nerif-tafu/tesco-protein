@@ -1,6 +1,6 @@
 {
   "name": "tesco-protein",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "Tesco UK protein density explorer (PER·KCAL) with scrape CLI and Docker image",
   "main": "server.mjs",
   "scripts": {
